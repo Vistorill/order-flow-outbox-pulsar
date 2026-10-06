@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: outbox-postgres
+    environment:
+      POSTGRES_USER: outbox
+      POSTGRES_PASSWORD: outbox
+      POSTGRES_DB: outbox
+    ports:
+      - "5445:5432"
+    volumes:
+      # Volume novo: o do projeto antigo era Postgres 15 e não abre no 17.
+      - outbox_pgdata17:/var/lib/postgresql/data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outbox -d outbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pulsar:
+    image: apachepulsar/pulsar:4.1.0
+    container_name: outbox-pulsar
+    # IP fixo no bookie: sem isso o ID dele vira o IP do container, que muda a cada
+    # restart, e o standalone não consegue mais ler os próprios ledgers.
+    command: bin/pulsar standalone --advertised-address 127.0.0.1
+    ports:
+      - "6650:6650"   # broker (pulsar-client)
+      - "8080:8080"   # admin REST (usado pelo painel em /debug/topics)
+    volumes:
+      - outbox_pulsar:/pulsar/data
+    healthcheck:
+      test: ["CMD", "bin/pulsar-admin", "brokers", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  outbox_pgdata17:
+  outbox_pulsar:

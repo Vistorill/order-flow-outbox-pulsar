@@ -1,0 +1,84 @@
+### Requisições prontas para a extensão REST Client (VS Code) ou IntelliJ HTTP Client.
+@base = http://localhost:3000
+
+### Criar pedido (troque a chave a cada pedido novo)
+POST {{base}}/orders
+Content-Type: application/json
+Idempotency-Key: 6f8c1d2e-0000-4000-8000-000000000001
+
+{ "customerEmail": "cliente@exemplo.com", "amount": "199.90" }
+
+### Repetir a mesma chave → 409 transação duplicada (details.originalOrderId)
+POST {{base}}/orders
+Content-Type: application/json
+Idempotency-Key: 6f8c1d2e-0000-4000-8000-000000000001
+
+{ "customerEmail": "cliente@exemplo.com", "amount": "199.90" }
+
+### Mesma chave, corpo diferente → 422
+POST {{base}}/orders
+Content-Type: application/json
+Idempotency-Key: 6f8c1d2e-0000-4000-8000-000000000001
+
+{ "customerEmail": "cliente@exemplo.com", "amount": "1.00" }
+
+### Sem Idempotency-Key → 400
+POST {{base}}/orders
+Content-Type: application/json
+
+{ "customerEmail": "cliente@exemplo.com", "amount": "199.90" }
+
+### Validação → 400 com os campos
+POST {{base}}/orders
+Content-Type: application/json
+Idempotency-Key: 6f8c1d2e-0000-4000-8000-000000000099
+
+{ "customerEmail": "nao-e-email", "amount": 199.9 }
+
+### Health
+GET {{base}}/health
+
+### Visão geral (painel)
+GET {{base}}/debug/overview
+
+### Outbox
+GET {{base}}/debug/outbox?limit=20
+
+### Tópicos no broker
+GET {{base}}/debug/topics
+
+### Ligar falha de publicação
+PUT {{base}}/debug/chaos
+Content-Type: application/json
+
+{ "failPublish": true }
+
+### Desligar todas as falhas
+PUT {{base}}/debug/chaos
+Content-Type: application/json
+
+{ "failPublish": false, "failConsumer": false, "crashAfterPublish": false }
+
+### Webhook: cadastrar endpoint (guarde o "secret" da resposta)
+POST {{base}}/webhooks/endpoints
+Content-Type: application/json
+
+{ "url": "http://localhost:3000/demo-receiver", "description": "Loja (demo)", "events": ["order.confirmed", "webhook.test"] }
+
+### Webhook: listar endpoints
+GET {{base}}/webhooks/endpoints
+
+### Webhook: enviar teste (troque o id)
+POST {{base}}/webhooks/endpoints/00000000-0000-0000-0000-000000000000/test
+
+### Webhook: últimas entregas
+GET {{base}}/webhooks/deliveries
+
+### Webhook: entrega com tentativas (troque o id)
+GET {{base}}/webhooks/deliveries/00000000-0000-0000-0000-000000000000
+
+### Webhook: reenviar (troque o id)
+POST {{base}}/webhooks/deliveries/00000000-0000-0000-0000-000000000000/retry
+
+### Teste de atomicidade
+POST {{base}}/debug/atomicity-test

@@ -1,0 +1,1419 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do Outbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #F3F5F8;
+  --surface: #FFFFFF;
+  --ink: #1B2232;
+  --muted: #5D6779;
+  --line: #D6DBE3;
+  --soft: #E8ECF1;
+  --accent: #3A3FB4;
+  --accent-ink: #FFFFFF;
+  --pending: #A86B12;   --pending-bg: #FBF0DC;
+  --processing: #2462A8; --processing-bg: #E1ECF8;
+  --published: #237049; --published-bg: #DFF1E6;
+  --failed: #B42A2A;    --failed-bg: #F9E1E1;
+  --log-bg: #161B27;  --log-ink: #D3D9E4; --log-muted: #7F8A9E;
+  --sans: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #12161F; --surface: #1A202C; --ink: #E6EAF1; --muted: #9AA4B6;
+    --line: #2C3444; --soft: #232A38; --accent: #8A8EF0; --accent-ink: #12161F;
+    --pending: #E9B25A; --pending-bg: #3A2D16;
+    --processing: #7AB2EE; --processing-bg: #1B2C42;
+    --published: #6CCB97; --published-bg: #173226;
+    --failed: #F08A8A; --failed-bg: #3E1D1F;
+    --log-bg: #0D1118;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 15px/1.5 var(--sans);
+}
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* ---------- header ---------- */
+header {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+  padding: 18px 24px; border-bottom: 1px solid var(--line); background: var(--surface);
+}
+header h1 { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+header .sub { color: var(--muted); font-size: 14px; }
+header .right { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--muted); }
+.dot.ok { background: var(--published); } .dot.bad { background: var(--failed); }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; color: var(--muted); }
+
+/* ---------- pipeline (the one bold element) ---------- */
+.pipeline {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0;
+  margin: 20px 24px 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+}
+.stage { position: relative; padding: 16px 20px 18px; }
+.stage + .stage { border-left: 1px solid var(--line); }
+.stage + .stage::before {
+  content: ''; position: absolute; left: -9px; top: 50%; width: 16px; height: 16px;
+  background: var(--surface); border-top: 1px solid var(--line); border-right: 1px solid var(--line);
+  transform: translateY(-50%) rotate(45deg);
+}
+.stage h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.stage .what { color: var(--muted); font-size: 13px; margin-top: 2px; min-height: 2.9em; }
+.stage .big { font-size: 40px; font-weight: 700; line-height: 1.05; margin-top: 8px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.stage .detail { font-size: 13px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.stage .detail b { color: var(--ink); font-weight: 600; }
+.stage.pulse .big { animation: pulse 700ms ease-out; }
+@keyframes pulse { 0% { color: var(--accent); } 100% { color: var(--ink); } }
+.stage.alarm { background: var(--failed-bg); }
+.stage.alarm::before { background: var(--failed-bg); }
+@media (prefers-reduced-motion: reduce) { .stage.pulse .big { animation: none; } }
+
+/* ---------- layout ---------- */
+main { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 20px; padding: 20px 24px 24px; align-items: start; }
+@media (max-width: 1000px) {
+  main { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 16px 16px 0; }
+  .stage:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
+  .stage:nth-child(4) { border-top: 1px solid var(--line); }
+  .stage:nth-child(3)::before { display: none; }
+  header { padding: 14px 16px; }
+}
+@media (max-width: 520px) { .stage .big { font-size: 32px; } .stage { padding: 12px 14px; } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; }
+.panel + .panel { margin-top: 16px; }
+.panel h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.panel .hint { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+
+/* ---------- form ---------- */
+label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+.field { margin-bottom: 12px; }
+input[type=text], input[type=email] {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper);
+}
+.keyrow { display: flex; gap: 6px; }
+.keyrow input { font-family: var(--mono); font-size: 12px; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: var(--r);
+  padding: 7px 12px; cursor: pointer; font-size: 14px; font-weight: 500; white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { padding: 3px 8px; font-size: 12.5px; }
+.btn.danger { color: var(--failed); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.btns.stack { margin-top: 10px; }
+
+/* ---------- switches ---------- */
+.switch { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--soft); cursor: pointer; }
+.switch:first-of-type { border-top: 0; padding-top: 2px; }
+.switch input { appearance: none; width: 36px; height: 20px; border-radius: 999px; background: var(--line); position: relative; cursor: pointer; margin: 2px 0 0; grid-row: span 2; transition: background .15s; }
+.switch input::after { content: ''; position: absolute; width: 16px; height: 16px; top: 2px; left: 2px; border-radius: 50%; background: var(--surface); transition: transform .15s; }
+.switch input:checked { background: var(--failed); }
+.switch input:checked::after { transform: translateX(16px); }
+.switch b { font-weight: 600; font-size: 14px; }
+.switch span { color: var(--muted); font-size: 13px; }
+
+/* ---------- responses ---------- */
+.resp { border: 1px solid var(--line); border-radius: var(--r); margin-top: 10px; overflow: hidden; }
+.resp-head { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: var(--soft); font-size: 13px; }
+.resp-head .when { margin-left: auto; color: var(--muted); }
+.resp pre { margin: 0; padding: 10px; max-height: 150px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.code { font-family: var(--mono); font-weight: 600; padding: 1px 7px; border-radius: 4px; font-size: 12.5px; }
+.c2 { background: var(--published-bg); color: var(--published); }
+.c4 { background: var(--pending-bg); color: var(--pending); }
+.c5, .c0 { background: var(--failed-bg); color: var(--failed); }
+.tag { font-size: 12px; color: var(--processing); background: var(--processing-bg); padding: 1px 7px; border-radius: 4px; }
+.empty { color: var(--muted); font-size: 14px; padding: 18px 4px; }
+
+/* ---------- tabs & tables ---------- */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px -18px 14px; padding: 0 12px; overflow-x: auto; }
+.tab { border: 0; background: none; padding: 8px 12px 10px; cursor: pointer; color: var(--muted); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tab[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab .n { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; margin-left: 4px; }
+.tablewrap { overflow-x: auto; max-height: 520px; overflow-y: auto; }
+.tablewrap th { position: sticky; top: 0; background: var(--surface); }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-weight: 600; font-size: 12.5px; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--soft); vertical-align: top; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.flash td { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: var(--processing-bg); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { tr.flash td { animation: none; } }
+.status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.s-pending, .s-PENDING { background: var(--pending-bg); color: var(--pending); }
+.s-processing { background: var(--processing-bg); color: var(--processing); }
+.s-SHIPPED { background: var(--processing-bg); color: var(--processing); }
+.s-published, .s-CONFIRMED, .s-DELIVERED { background: var(--published-bg); color: var(--published); }
+.s-failed { background: var(--failed-bg); color: var(--failed); }
+.err { color: var(--failed); font-size: 12.5px; max-width: 280px; }
+.muted { color: var(--muted); }
+
+.topic { border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; margin-bottom: 10px; }
+.topic.stray { border-color: var(--failed); background: var(--failed-bg); }
+.topic h4 { margin: 0 0 6px; font-family: var(--mono); font-size: 13.5px; font-weight: 500; }
+.topic .row { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13.5px; }
+
+/* ---------- log console ---------- */
+.rightcol { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
+.console { background: var(--log-bg); color: var(--log-ink); border-radius: var(--r); overflow: hidden; }
+.console-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #ffffff14; flex-wrap: wrap; }
+.console-head h3 { margin: 0; font-size: 15px; font-weight: 600; color: #fff; }
+.console-head .right { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.console .btn { background: transparent; border-color: #ffffff2a; color: var(--log-ink); }
+.console .btn[aria-pressed=true] { background: #ffffff1c; }
+.lines { height: 380px; overflow-y: auto; padding: 8px 0; font: 12.5px/1.6 var(--mono); }
+.line { display: grid; grid-template-columns: 68px 44px 168px 1fr; gap: 10px; padding: 0 14px; }
+.line:hover { background: #ffffff0a; }
+.line .t, .line .ctx { color: var(--log-muted); }
+.line .ctx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line .msg { min-width: 0; overflow-wrap: anywhere; }
+.lv-warn .lv { color: #E9B25A; } .lv-error .lv, .lv-error .msg { color: #F49494; } .lv-log .lv { color: #6CCB97; } .lv-debug .lv { color: var(--log-muted); }
+@media (max-width: 700px) { .line { grid-template-columns: 60px 1fr; } .line .lv, .line .ctx { display: none; } }
+
+/* ---------- traces (requisições em tempo real) ---------- */
+.trace-list { display: grid; gap: 10px; max-height: 640px; overflow-y: auto; }
+.trace { border: 1px solid var(--line); border-radius: var(--r); border-left: 3px solid var(--line); background: var(--surface); }
+.trace.o-running, .trace.o-waiting { border-left-color: var(--processing); }
+.trace.o-done { border-left-color: var(--published); }
+.trace.o-duplicate, .trace.o-error { border-left-color: var(--failed); }
+.trace.fresh { animation: flash 1.2s ease-out; }
+.trace summary { list-style: none; cursor: pointer; padding: 10px 12px; display: grid; gap: 8px; }
+.trace summary::-webkit-details-marker { display: none; }
+.trace-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.trace-top .who { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-top .when { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trace-top .chev { color: var(--muted); transition: transform .15s; }
+.trace[open] .chev { transform: rotate(90deg); }
+.outcome { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.oc-running, .oc-waiting { background: var(--processing-bg); color: var(--processing); }
+.oc-done { background: var(--published-bg); color: var(--published); }
+.oc-duplicate, .oc-error { background: var(--failed-bg); color: var(--failed); }
+.track { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.seg { font-size: 11.5px; color: var(--muted); min-width: 0; }
+.seg i { display: block; height: 5px; border-radius: 3px; background: var(--soft); margin-bottom: 4px; }
+.seg span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg.ok i { background: var(--published); } .seg.warn i { background: var(--pending); }
+.seg.error i { background: var(--failed); } .seg.info i { background: var(--processing); }
+.seg.ok span, .seg.warn span, .seg.error span, .seg.info span { color: var(--ink); }
+.seg.next i { background: var(--processing-bg); animation: wait 1.2s ease-in-out infinite alternate; }
+@keyframes wait { to { background: var(--processing); } }
+@media (prefers-reduced-motion: reduce) { .seg.next i, .trace.fresh { animation: none; } }
+.steps { list-style: none; margin: 0; padding: 4px 12px 12px; border-top: 1px solid var(--soft); }
+.step { display: grid; grid-template-columns: 62px 96px 1fr; gap: 2px 10px; padding: 6px 0; border-bottom: 1px solid var(--soft); font-size: 13px; }
+.step:last-child { border-bottom: 0; }
+.step .off { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.step .stg { font-size: 12px; color: var(--muted); }
+.step .ttl { font-weight: 500; }
+.step .ttl::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--muted); }
+.step.st-ok .ttl::before { background: var(--published); } .step.st-warn .ttl::before { background: var(--pending); }
+.step.st-error .ttl::before { background: var(--failed); } .step.st-info .ttl::before { background: var(--processing); }
+.step.st-error .ttl { color: var(--failed); }
+.step .det { grid-column: 3; font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.trace pre { margin: 0 12px 12px; padding: 10px; background: var(--paper); border-radius: var(--r); max-height: 180px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.trace .sub-h { margin: 8px 12px 6px; font-size: 12px; font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .step { grid-template-columns: 54px 1fr; } .step .stg { display: none; } .step .det { grid-column: 2; }
+  .track { gap: 3px; } .seg span { font-size: 10.5px; }
+}
+
+/* ---------- abas Mensageria e Pulsar ---------- */
+.kv { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; }
+.kv span { font: 11.5px/1.5 var(--mono); background: var(--soft); border-radius: 4px; padding: 1px 6px; overflow-wrap: anywhere; }
+.kv b { font-family: var(--sans); font-weight: 600; color: var(--muted); margin-right: 4px; }
+.flowbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
+.flowbar b { color: var(--ink); font-weight: 600; background: var(--soft); border-radius: 4px; padding: 1px 7px; }
+.msg-list { display: grid; gap: 8px; }
+.step.k-claimed .ttl::before, .step.k-produce .ttl::before, .step.k-delivered .ttl::before { background: var(--processing); }
+.step.k-stored .ttl::before, .step.k-processed .ttl::before, .step.k-ack .ttl::before { background: var(--published); }
+.step.k-duplicate .ttl::before, .step.k-nack .ttl::before { background: var(--pending); }
+.step.k-send-failed .ttl::before { background: var(--failed); }
+.step.k-send-failed .ttl { color: var(--failed); }
+.step .det.kvwrap { font-family: var(--sans); }
+.flow { list-style: none; margin: 0; padding: 0; counter-reset: f; }
+.flow > li { position: relative; display: grid; grid-template-columns: 30px 1fr; gap: 0 12px; padding-bottom: 16px; }
+.flow > li::before { counter-increment: f; content: counter(f); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+.flow > li:not(:last-child)::after { content: ''; position: absolute; left: 12px; top: 28px; bottom: 2px; width: 2px; background: var(--line); }
+.flow h4 { margin: 2px 0 2px; font-size: 14.5px; font-weight: 600; }
+.flow p { margin: 0; color: var(--muted); font-size: 13px; }
+.flow .live { margin-top: 6px; }
+.flow .sub { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--soft); border-radius: var(--r); font-size: 12.5px; }
+.conn { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.conn div { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; min-width: 0; }
+.conn small { display: block; color: var(--muted); font-size: 12px; }
+.conn code { font: 12.5px var(--mono); overflow-wrap: anywhere; }
+.pulsar-h { margin: 18px 0 8px; font-size: 14.5px; font-weight: 600; }
+
+/* ---------- webhooks ---------- */
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; }
+.checks label { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; font-size: 13.5px; margin: 0; }
+.secret-box { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--published); background: var(--published-bg); border-radius: var(--r); font-size: 13px; }
+.secret-box code { display: block; margin-top: 4px; font: 12.5px var(--mono); overflow-wrap: anywhere; color: var(--ink); }
+.wh-sec { margin: 18px 0 8px; font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wh-sec:first-child { margin-top: 0; }
+.wh-sec .btn { margin-left: auto; }
+.endpoint { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; margin-bottom: 8px; display: grid; gap: 6px; }
+.endpoint.off { opacity: .6; }
+.endpoint .url { font: 13px var(--mono); overflow-wrap: anywhere; }
+.endpoint .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.endpoint .row .btns { margin-left: auto; gap: 6px; }
+.evt { font: 11.5px var(--mono); background: var(--processing-bg); color: var(--processing); border-radius: 4px; padding: 1px 6px; }
+.s-delivering { background: var(--processing-bg); color: var(--processing); }
+.s-delivered { background: var(--published-bg); color: var(--published); }
+.trace .inner { padding: 0 12px 12px; }
+.trace .inner table { font-size: 12.5px; }
+.trace .inner td { padding: 5px 8px; }
+.recv { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px; margin-bottom: 8px; font-size: 13px; display: grid; gap: 4px; }
+.recv.bad { border-color: var(--failed); background: var(--failed-bg); }
+.recv .top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.recv .top .when { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+.ok-mark { color: var(--published); font-weight: 600; } .bad-mark { color: var(--failed); font-weight: 600; }
+
+/* ---------- fluxo ponta a ponta ---------- */
+.journey { margin: 20px 24px 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px 20px 20px; }
+.j-head { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-start; }
+.j-head h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.j-head .hint { color: var(--muted); font-size: 13.5px; margin: 2px 0 0; max-width: 760px; }
+.j-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.j-actions label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 400; font-size: 13px; color: var(--muted); }
+.j-orders { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
+.j-chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.j-chip[aria-pressed=true] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.j-chip .mono { font-size: 12px; }
+.j-rail { display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); margin: 18px 0 6px; position: relative; }
+.j-rail::before { content: ''; position: absolute; left: 5%; right: 5%; top: 15px; height: 2px; background: var(--line); }
+.j-dot { position: relative; display: grid; justify-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); text-align: center; padding: 0 2px; cursor: pointer; background: none; border: 0; }
+.j-dot b { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 13.5px; font-weight: 700; background: var(--soft); color: var(--muted); border: 2px solid var(--surface); }
+.j-dot span { line-height: 1.25; overflow-wrap: anywhere; }
+.j-dot.done b { background: var(--published); color: #fff; }
+.j-dot.active b { background: var(--processing); color: #fff; animation: jpulse 1.1s ease-in-out infinite alternate; }
+.j-dot.error b { background: var(--failed); color: #fff; }
+.j-dot.warn b { background: var(--pending); color: #fff; }
+.j-dot.done span, .j-dot.active span, .j-dot.error span, .j-dot.warn span { color: var(--ink); }
+@keyframes jpulse { from { box-shadow: 0 0 0 0 var(--processing-bg); } to { box-shadow: 0 0 0 7px var(--processing-bg); } }
+@media (prefers-reduced-motion: reduce) { .j-dot.active b { animation: none; } }
+.j-now { margin: 10px 0 14px; padding: 9px 12px; border-radius: var(--r); background: var(--processing-bg); color: var(--processing); font-size: 14px; font-weight: 500; }
+.j-now.ok { background: var(--published-bg); color: var(--published); }
+.j-now.bad { background: var(--failed-bg); color: var(--failed); }
+.j-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.j-step { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: var(--r); padding: 10px 12px; display: grid; gap: 6px; min-width: 0; scroll-margin: 80px; }
+.j-step.done { border-left-color: var(--published); }
+.j-step.active { border-left-color: var(--processing); background: var(--processing-bg); }
+.j-step.error { border-left-color: var(--failed); background: var(--failed-bg); }
+.j-step.warn { border-left-color: var(--pending); }
+.j-step.pending { opacity: .62; }
+.j-step .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.j-step .num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: var(--soft); color: var(--muted); flex: none; }
+.j-step.done .num { background: var(--published); color: #fff; }
+.j-step.active .num { background: var(--processing); color: #fff; }
+.j-step.error .num { background: var(--failed); color: #fff; }
+.j-step.warn .num { background: var(--pending); color: #fff; }
+.j-step h4 { margin: 0; font-size: 14.5px; font-weight: 600; min-width: 0; }
+.j-step .actor { font-size: 11.5px; font-weight: 600; color: var(--accent); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
+.j-step .t { margin-left: auto; font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
+.j-step p { margin: 0; color: var(--muted); font-size: 13px; }
+.j-step details summary { cursor: pointer; font-size: 12.5px; color: var(--accent); }
+.j-step pre { margin: 6px 0 0; padding: 8px 10px; background: var(--paper); border-radius: var(--r); max-height: 220px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.j-step.wide { grid-column: 1 / -1; }
+.j-status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 2px 0 4px; }
+.j-stat { border: 1px solid var(--line); border-radius: var(--r); padding: 7px 10px; background: var(--surface); min-width: 0; }
+.j-stat small { display: block; font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.j-stat b { display: block; font-size: 15px; overflow-wrap: anywhere; }
+.j-stat.ok { border-color: var(--published); background: var(--published-bg); } .j-stat.ok b { color: var(--published); }
+.j-stat.bad { border-color: var(--failed); background: var(--failed-bg); } .j-stat.bad b { color: var(--failed); }
+.j-stat.warn { border-color: var(--pending); background: var(--pending-bg); } .j-stat.warn b { color: var(--pending); }
+.j-stat.info b { color: var(--processing); }
+.j-fix { border: 1px solid var(--failed); background: var(--failed-bg); border-radius: var(--r); padding: 9px 12px; display: grid; gap: 6px; font-size: 13.5px; }
+.j-fix b { color: var(--failed); }
+.j-fix .btns { gap: 8px; }
+.wh-warn { border: 1px solid var(--pending); background: var(--pending-bg); color: var(--pending); border-radius: var(--r); padding: 8px 12px; font-size: 13px; margin-bottom: 8px; }
+@media (max-width: 760px) { .j-status { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.j-report { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; counter-reset: r; }
+.j-report li { display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: start; font-size: 13.5px; line-height: 1.45; }
+.j-report li::before { counter-increment: r; content: counter(r); width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--accent); color: var(--accent-ink); }
+.j-report li .when { font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
+.j-report li.pending-line { color: var(--muted); font-style: italic; }
+.j-report li.final { font-weight: 600; }
+.j-empty { color: var(--muted); padding: 16px 0 4px; font-size: 14px; }
+@media (max-width: 1100px) { .j-steps { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .journey { margin: 16px 16px 0; padding: 14px; } }
+@media (max-width: 760px) {
+  .j-rail { grid-template-columns: repeat(5, minmax(0, 1fr)); row-gap: 12px; }
+  .j-rail::before { display: none; }
+}
+
+.toast { position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: var(--paper); padding: 10px 14px; border-radius: var(--r); font-size: 14px; max-width: 360px; opacity: 0; transform: translateY(6px); transition: .2s; pointer-events: none; }
+.toast.show { opacity: 1; transform: none; }
+.banner { margin: 16px 24px 0; padding: 10px 14px; border-radius: var(--r); background: var(--failed-bg); color: var(--failed); font-size: 14px; display: none; }
+.banner.show { display: block; }
+@media (max-width: 1000px) { .banner { margin: 16px 16px 0; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Painel do Outbox</h1>
+    <div class="sub">Siga cada pedido da API até o consumidor e injete falhas para ver o sistema se recuperar.</div>
+  </div>
+  <div class="right">
+    <span class="chip" id="chip-db"><span class="dot"></span>Postgres</span>
+    <span class="chip" id="chip-broker"><span class="dot"></span>Broker</span>
+    <button class="btn danger" id="btn-reset" title="Apaga pedidos, outbox, eventos processados e logs">Limpar tudo</button>
+  </div>
+</header>
+
+<div class="banner" id="banner"></div>
+
+<section class="pipeline" aria-label="Caminho de um evento">
+  <div class="stage" id="st-api">
+    <h2>API</h2>
+    <div class="what">Grava o pedido e o evento na mesma transação</div>
+    <div class="big" id="n-orders">0</div>
+    <div class="detail" id="d-orders">pedidos criados</div>
+  </div>
+  <div class="stage" id="st-outbox">
+    <h2>Outbox</h2>
+    <div class="what">Eventos esperando o relay publicar</div>
+    <div class="big" id="n-outbox">0</div>
+    <div class="detail" id="d-outbox">na fila</div>
+  </div>
+  <div class="stage" id="st-broker">
+    <h2>Broker</h2>
+    <div class="what" id="w-broker">Mensagens publicadas</div>
+    <div class="big" id="n-broker">0</div>
+    <div class="detail" id="d-broker">aguardando consumo</div>
+  </div>
+  <div class="stage" id="st-consumer">
+    <h2>Consumidor</h2>
+    <div class="what">Confirma o pedido uma única vez</div>
+    <div class="big" id="n-consumer">0</div>
+    <div class="detail" id="d-consumer">eventos processados</div>
+  </div>
+</section>
+
+<section class="journey" id="journey" aria-label="Fluxo ponta a ponta">
+  <div class="j-head">
+    <div>
+      <h2>Fluxo ponta a ponta</h2>
+      <p class="hint">Do <span class="mono">POST /orders</span> até a entrega na API da transportadora e o webhook de confirmação de entrega, em 11 passos numerados (o último é o relatório final com as duplicidades). Cada passo é lido do banco em tempo real.</p>
+    </div>
+    <div class="j-actions">
+      <label><input type="checkbox" id="j-follow" checked> Seguir o pedido mais recente</label>
+      <button class="btn primary" id="btn-simulate" type="button">▶ Simular fluxo completo</button>
+    </div>
+  </div>
+  <div class="j-orders" id="j-orders"></div>
+  <div id="j-body"><div class="j-empty">Clique em "Simular fluxo completo": o painel cadastra o endpoint de demonstração do cliente (se ainda não houver), cria um pedido e mostra cada passo acontecendo.</div></div>
+</section>
+
+<main>
+  <div>
+    <section class="panel">
+      <h3>Novo pedido</h3>
+      <p class="hint">Cada envio usa a chave de idempotência abaixo. Repetir a chave é recusado como transação duplicada (409), sem criar outro pedido.</p>
+      <form id="order-form" autocomplete="off">
+        <div class="field">
+          <label for="email">E-mail do cliente</label>
+          <input type="email" id="email" value="cliente@exemplo.com" required>
+        </div>
+        <div class="field">
+          <label for="amount">Valor (R$)</label>
+          <input type="text" id="amount" value="199.90" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="idem">Idempotency-Key</label>
+          <div class="keyrow">
+            <input type="text" id="idem">
+            <button type="button" class="btn small" id="btn-newkey" title="Gerar nova chave">Nova chave</button>
+          </div>
+        </div>
+        <div class="btns">
+          <button class="btn primary" type="submit">Criar pedido</button>
+          <button class="btn" type="button" id="btn-twice">Enviar 2x com a mesma chave</button>
+        </div>
+        <div class="btns stack">
+          <button class="btn" type="button" id="btn-reuse">Mesma chave, outro valor</button>
+          <button class="btn" type="button" id="btn-nokey">Sem chave</button>
+          <button class="btn" type="button" id="btn-invalid">Dados inválidos</button>
+          <button class="btn" type="button" id="btn-burst">Criar 10 pedidos</button>
+        </div>
+      </form>
+      <div id="responses"></div>
+    </section>
+
+    <section class="panel">
+      <h3>Webhook do cliente final</h3>
+      <p class="hint">Cadastre a URL que recebe o aviso <span class="mono">order.confirmed</span> quando o pedido é confirmado. A URL abaixo é um receptor de demonstração dentro do próprio app, que confere a assinatura como um cliente real faria.</p>
+      <form id="wh-form" autocomplete="off">
+        <div class="field">
+          <label for="wh-url">URL do cliente</label>
+          <input type="text" id="wh-url" inputmode="url">
+        </div>
+        <div class="field">
+          <label for="wh-desc">Descrição</label>
+          <input type="text" id="wh-desc" value="Loja do cliente (demo)">
+        </div>
+        <div class="checks" role="group" aria-label="Eventos">
+          <label><input type="checkbox" name="wh-evt" value="*" checked> <b>Todos os eventos</b> (inclusive os futuros)</label>
+          <label><input type="checkbox" name="wh-evt" value="order.confirmed"> order.confirmed</label>
+          <label><input type="checkbox" name="wh-evt" value="order.delivered"> order.delivered</label>
+          <label><input type="checkbox" name="wh-evt" value="order.completed"> order.completed</label>
+          <label><input type="checkbox" name="wh-evt" value="webhook.test"> webhook.test</label>
+        </div>
+        <button class="btn primary" type="submit">Cadastrar endpoint</button>
+      </form>
+      <div id="wh-secret"></div>
+    </section>
+
+    <section class="panel">
+      <h3>Injetar falhas</h3>
+      <p class="hint">Ligue uma falha, crie pedidos e acompanhe a outbox e os logs. Desligue e veja tudo se recuperar.</p>
+      <label class="switch">
+        <input type="checkbox" data-flag="failPublish">
+        <b>Broker fora do ar</b>
+        <span>O relay não consegue publicar. Os eventos ficam na outbox com erro e novas tentativas cada vez mais espaçadas.</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" data-flag="failConsumer">
+        <b>Consumidor quebrado</b>
+        <span>O consumidor lança erro e devolve a mensagem (nack). O broker reentrega até dar certo.</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" data-flag="crashAfterPublish">
+        <b>Queda após publicar</b>
+        <span>O relay publica mas "morre" antes de marcar. Quando o lease expira, o evento sai de novo e o consumidor descarta a duplicata.</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" data-flag="failCarrierApi">
+        <b>API da transportadora fora do ar</b>
+        <span>A transportadora responde 503. O serviço de envio devolve o evento ao broker (NACK) e a chamada é repetida com a mesma Idempotency-Key até dar certo.</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" data-flag="failWebhook">
+        <b>Cliente do webhook fora do ar</b>
+        <span>O receptor de demonstração responde 503. O webhook é retentado com backoff e, depois do máximo de tentativas, fica como falhou até ser reenviado.</span>
+      </label>
+    </section>
+
+    <section class="panel">
+      <h3>Testes rápidos</h3>
+      <p class="hint">Provas das garantias do padrão, com o resultado mostrado acima dos pedidos.</p>
+      <div class="btns">
+        <button class="btn" id="btn-atomic">Testar atomicidade</button>
+        <button class="btn" id="btn-relay">Rodar o relay agora</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="rightcol">
+  <section class="panel" aria-label="Dados">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="outbox">Outbox<span class="n" id="tn-outbox"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="orders">Pedidos<span class="n" id="tn-orders"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="processed">Eventos processados<span class="n" id="tn-processed"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="topics">Tópicos</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="messaging">Mensageria<span class="n" id="tn-messaging"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="pulsar">Pulsar</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="webhooks">Webhooks<span class="n" id="tn-webhooks"></span></button>
+    </div>
+    <div id="tab-body" class="tablewrap"></div>
+  </section>
+  <section class="console" aria-label="Logs">
+    <div class="console-head">
+      <h3>Logs da aplicação</h3>
+      <div class="right">
+        <button class="btn small" data-level="all" aria-pressed="true">Todos</button>
+        <button class="btn small" data-level="warn" aria-pressed="false">Avisos e erros</button>
+        <button class="btn small" data-level="error" aria-pressed="false">Só erros</button>
+        <button class="btn small" id="btn-pause" aria-pressed="false">Pausar rolagem</button>
+      </div>
+    </div>
+    <div class="lines" id="lines"></div>
+  </section>
+  <section class="panel" aria-label="Requisições em tempo real">
+    <h3>Requisições em tempo real</h3>
+    <p class="hint">Cada <span class="mono">POST /orders</span> acompanhado da API até o consumidor. Clique numa requisição para ver cada passo, quanto tempo levou e a resposta enviada.</p>
+    <div class="trace-list" id="traces"><div class="empty">Nenhuma requisição ainda. Crie um pedido no formulário.</div></div>
+  </section>
+  </div>
+
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) n.append(k instanceof Node ? k : String(k));
+  return n;
+};
+const uuid = () => crypto.randomUUID ? crypto.randomUUID() :
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+const short = (id) => id ? id.slice(0, 8) : '';
+const timeOf = (d) => d ? new Date(d).toLocaleTimeString('pt-BR') : '';
+const rel = (d) => {
+  if (!d) return '';
+  const s = Math.round((new Date(d) - Date.now()) / 1000);
+  if (Math.abs(s) < 1) return 'agora';
+  return s > 0 ? `em ${s}s` : `há ${-s}s`;
+};
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+/* ---------------- HTTP com registro da resposta na tela ---------------- */
+async function call(method, path, { body, headers = {}, label, show = true } = {}) {
+  const started = performance.now();
+  let status = 0, data, replayed = null;
+  try {
+    const res = await fetch(path, {
+      method,
+      headers: body !== undefined ? { 'content-type': 'application/json', ...headers } : headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    status = res.status;
+    replayed = res.headers.get('Idempotent-Replayed');
+    const text = await res.text();
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  } catch (e) {
+    data = { message: `Sem resposta da API: ${e.message}` };
+  }
+  if (show) showResponse({ method, path, status, data, replayed, label, ms: Math.round(performance.now() - started) });
+  return { status, data, replayed };
+}
+
+function showResponse({ method, path, status, data, replayed, label, ms }) {
+  const cls = 'c' + String(status)[0];
+  const box = el('div', { class: 'resp' },
+    el('div', { class: 'resp-head' },
+      el('span', { class: `code ${cls}` }, status || 'falhou'),
+      el('span', { class: 'mono' }, `${method} ${path}`),
+      replayed === 'true' ? el('span', { class: 'tag' }, 'resposta repetida') : null,
+      el('span', { class: 'when' }, label ? `${label} · ${ms}ms` : `${ms}ms`),
+    ),
+    el('pre', {}, typeof data === 'string' ? data : JSON.stringify(data, null, 2)),
+  );
+  const list = $('#responses');
+  list.prepend(box);
+  while (list.children.length > 3) list.lastChild.remove();
+}
+
+/* ---------------- Formulário ---------------- */
+const newKey = () => { $('#idem').value = uuid(); };
+newKey();
+$('#btn-newkey').onclick = newKey;
+const formBody = () => ({ customerEmail: $('#email').value, amount: $('#amount').value });
+
+$('#order-form').onsubmit = async (e) => {
+  e.preventDefault();
+  await call('POST', '/orders', { body: formBody(), headers: { 'Idempotency-Key': $('#idem').value }, label: 'criar pedido' });
+  newKey(); refresh();
+};
+$('#btn-twice').onclick = async () => {
+  const headers = { 'Idempotency-Key': $('#idem').value };
+  await Promise.all([
+    call('POST', '/orders', { body: formBody(), headers, label: 'envio 1' }),
+    call('POST', '/orders', { body: formBody(), headers, label: 'envio 2 (simultâneo)' }),
+  ]);
+  const third = await call('POST', '/orders', { body: formBody(), headers, label: 'envio 3 (depois)' });
+  toast(third.status === 409 ? 'Mesma chave: um único pedido criado, as duplicatas foram recusadas (409).' : 'Veja as respostas abaixo do formulário.');
+  newKey(); refresh();
+};
+$('#btn-reuse').onclick = async () => {
+  const key = $('#idem').value;
+  await call('POST', '/orders', { body: formBody(), headers: { 'Idempotency-Key': key }, label: 'original' });
+  await call('POST', '/orders', { body: { ...formBody(), amount: '1.00' }, headers: { 'Idempotency-Key': key }, label: 'mesma chave, corpo diferente' });
+  newKey(); refresh();
+};
+$('#btn-nokey').onclick = () => call('POST', '/orders', { body: formBody(), label: 'sem Idempotency-Key' });
+$('#btn-invalid').onclick = () => call('POST', '/orders', {
+  body: { customerEmail: 'nao-e-email', amount: 199.9 },
+  headers: { 'Idempotency-Key': uuid() }, label: 'e-mail inválido e valor numérico',
+});
+$('#btn-burst').onclick = async () => {
+  const reqs = Array.from({ length: 10 }, (_, i) => call('POST', '/orders', {
+    body: { customerEmail: `cliente${i + 1}@exemplo.com`, amount: (10 + i * 7.5).toFixed(2) },
+    headers: { 'Idempotency-Key': uuid() }, show: false,
+  }));
+  const res = await Promise.all(reqs);
+  toast(`${res.filter(r => r.status === 201).length} de 10 pedidos criados.`);
+  refresh();
+};
+
+/* ---------------- Falhas e testes ---------------- */
+document.querySelectorAll('[data-flag]').forEach((input) => {
+  input.onchange = async () => {
+    const r = await call('PUT', '/debug/chaos', { body: { [input.dataset.flag]: input.checked }, show: false });
+    if (r.status !== 200) { input.checked = !input.checked; toast('Não foi possível alterar a falha.'); }
+    else toast(input.checked ? 'Falha ligada.' : 'Falha desligada.');
+    refresh();
+  };
+});
+$('#btn-atomic').onclick = async () => {
+  const r = await call('POST', '/debug/atomicity-test', { label: 'teste de atomicidade' });
+  toast(r.data?.atomic ? 'Rollback desfez o pedido e o evento juntos.' : 'O teste de atomicidade falhou.');
+};
+$('#btn-relay').onclick = () => call('POST', '/debug/relay/run', { label: 'ciclo manual do relay' }).then(refresh);
+$('#btn-reset').onclick = async () => {
+  if (!confirm('Apagar pedidos, outbox, eventos processados e logs?')) return;
+  await call('POST', '/debug/reset', { show: false });
+  $('#responses').replaceChildren(); $('#lines').replaceChildren(); lastLog = 0; seen.clear();
+  lastWebhooks = ''; whOpen.clear(); jLast = ''; jSelected = null; jOpen.clear();
+  traceNodes.clear(); traceOpen.clear(); msgNodes.clear(); msgOpen.clear(); msgBox.replaceChildren();
+  document.querySelectorAll('[data-flag]').forEach(i => i.checked = false);
+  toast('Tudo limpo.'); refresh();
+};
+
+/* ---------------- Tabs ---------------- */
+let tab = 'outbox';
+document.querySelectorAll('.tab').forEach((b) => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t === b));
+  renderTab(true);
+});
+
+const seen = new Map(); // id → assinatura da linha, para destacar o que mudou
+function rowClass(id, sig) {
+  const prev = seen.get(id); seen.set(id, sig);
+  return prev !== undefined && prev !== sig ? 'flash' : '';
+}
+
+async function renderTab() {
+  const body = $('#tab-body');
+  if (tab === 'outbox') {
+    const { data } = await call('GET', '/debug/outbox?limit=100', { show: false });
+    if (!Array.isArray(data)) return;
+    if (!data.length) return body.replaceChildren(el('div', { class: 'empty' }, 'Nenhum evento ainda. Crie um pedido para ver o evento nascer aqui.'));
+    body.replaceChildren(el('table', {},
+      el('thead', {}, el('tr', {}, ['Evento', 'Status', 'Tentativas', 'Próxima tentativa', 'Publicado', 'Último erro', ''].map(h => el('th', {}, h)))),
+      el('tbody', {}, data.map(e => el('tr', { class: rowClass(e.id, e.status + e.attempts) },
+        el('td', {}, el('div', { class: 'mono', title: e.id }, short(e.id)), el('div', { class: 'muted', style: 'font-size:12px' }, `${e.eventType} → ${e.topic}`)),
+        el('td', {}, el('span', { class: `status s-${e.status}` }, e.status)),
+        el('td', { class: 'num' }, e.attempts),
+        el('td', { class: 'muted' }, e.status === 'pending' ? rel(e.availableAt) : e.status === 'processing' ? `lease ${rel(e.lockedUntil)}` : ''),
+        el('td', { class: 'muted' }, timeOf(e.publishedAt)),
+        el('td', { class: 'err' }, e.lastError || ''),
+        el('td', {},
+          e.status === 'failed' ? el('button', { class: 'btn small', onclick: () => call('POST', `/debug/outbox/${e.id}/retry`, { label: 'reenfileirar' }).then(refresh) }, 'Tentar de novo') : null,
+          e.status === 'published' ? el('button', { class: 'btn small', title: 'Publica de novo com o mesmo eventId', onclick: () => call('POST', `/debug/outbox/${e.id}/replay`, { label: 'duplicata simulada' }).then(() => toast('Duplicata enviada. Veja o consumidor ignorá-la nos logs.')) }, 'Duplicar entrega') : null,
+        ),
+      ))),
+    ));
+  } else if (tab === 'orders') {
+    const { data } = await call('GET', '/debug/orders?limit=100', { show: false });
+    if (!Array.isArray(data)) return;
+    if (!data.length) return body.replaceChildren(el('div', { class: 'empty' }, 'Nenhum pedido ainda. Use o formulário ao lado.'));
+    body.replaceChildren(el('table', {},
+      el('thead', {}, el('tr', {}, ['Pedido', 'Cliente', 'Valor', 'Status', 'Pagamento', 'Entrega', 'Criado', 'Pago em'].map(h => el('th', {}, h)))),
+      el('tbody', {}, data.map(o => el('tr', { class: rowClass(o.id, o.status) },
+        el('td', { class: 'mono', title: o.id }, short(o.id)),
+        el('td', {}, o.customerEmail),
+        el('td', { class: 'num' }, `R$ ${o.amount.replace('.', ',')}`),
+        el('td', {}, el('span', { class: `status s-${o.status}` }, ORDER_STATUS[o.status] || o.status)),
+        el('td', {}, el('span', { class: `status ${o.paymentStatus === 'PAID' ? 's-published' : 's-pending'}` }, o.paymentStatus)),
+        el('td', {}, el('span', { class: `status s-${o.deliveryStatus === 'PENDING' ? 'pending' : o.deliveryStatus}` }, o.deliveryStatus)),
+        el('td', { class: 'muted' }, timeOf(o.createdAt)),
+        el('td', { class: 'muted' }, timeOf(o.paidAt)),
+      ))),
+    ));
+  } else if (tab === 'processed') {
+    const { data } = await call('GET', '/debug/processed-events?limit=100', { show: false });
+    if (!Array.isArray(data)) return;
+    if (!data.length) return body.replaceChildren(el('div', { class: 'empty' }, 'Nenhum evento processado. O consumidor registra aqui cada evento que aplicou.'));
+    body.replaceChildren(
+      el('p', { class: 'hint' }, 'Chave primária (event_id, consumer): uma segunda entrega do mesmo evento não consegue inserir a linha e é descartada.'),
+      el('table', {},
+        el('thead', {}, el('tr', {}, ['Evento', 'Consumidor', 'Processado'].map(h => el('th', {}, h)))),
+        el('tbody', {}, data.map(p => el('tr', {},
+          el('td', { class: 'mono', title: p.eventId }, short(p.eventId)),
+          el('td', {}, p.consumer),
+          el('td', { class: 'muted' }, timeOf(p.processedAt)),
+        ))),
+      ));
+  } else if (tab === 'messaging') {
+    await renderMessaging(body);
+  } else if (tab === 'pulsar') {
+    await renderPulsar(body);
+  } else if (tab === 'webhooks') {
+    await renderWebhooks(body);
+  } else {
+    const { data } = await call('GET', '/debug/topics', { show: false });
+    if (!data) return;
+    if (!data.ok) return body.replaceChildren(el('div', { class: 'empty' }, `Não foi possível ler os tópicos do ${data.broker}: ${data.error}`));
+    if (!data.topics.length) return body.replaceChildren(el('div', { class: 'empty' }, 'Nenhum tópico ainda.'));
+    body.replaceChildren(
+      el('p', { class: 'hint' }, data.broker === 'pulsar'
+        ? 'Lido do admin do Pulsar pelo backend. Um tópico sem assinatura aparece em vermelho: mensagens que ninguém vai consumir.'
+        : 'Broker em memória. Um tópico sem assinatura aparece em vermelho: mensagens que ninguém vai consumir.'),
+      ...data.topics.map(t => el('div', { class: 'topic' + (t.subscriptions.length ? '' : ' stray') },
+        el('h4', {}, t.topic),
+        el('div', { class: 'row' }, el('span', {}, `Publicadas: `, el('b', {}, t.published)),
+          t.subscriptions.length ? null : el('span', {}, 'Sem assinatura')),
+        ...t.subscriptions.map(s => el('div', { class: 'row muted' },
+          el('span', {}, `Assinatura ${s.name}`),
+          el('span', {}, `Na fila: ${s.backlog}`),
+          el('span', {}, `Confirmadas: ${s.acked}`),
+          el('span', {}, `Reentregas: ${s.redeliveries}`),
+        )),
+      )),
+    );
+  }
+}
+
+/* ---------------- Aba Mensageria ---------------- */
+const MSG_STATUS = {
+  claimed: ['Reservada pelo relay', 'oc-running'], produce: ['Enviando', 'oc-running'],
+  stored: ['No broker', 'oc-running'], delivered: ['Entregue', 'oc-running'],
+  processed: ['Processada', 'oc-running'], duplicate: ['Duplicata descartada', 'oc-done'],
+  ack: ['Confirmada (ACK)', 'oc-done'], nack: ['Reentregando (NACK)', 'oc-error'],
+  'send-failed': ['Falha no envio', 'oc-error'],
+};
+const msgNodes = new Map();  // eventId → { node, version }
+const msgOpen = new Map();
+const msgBox = el('div', { class: 'msg-list' });
+const msgIntro = [
+  el('p', { class: 'hint' }, 'Cada mensagem do momento em que o relay lê a outbox até o ACK do consumidor, passo a passo, com os dados reais do broker (messageId, ledger, entry, latência, reentregas).'),
+  el('div', { class: 'flowbar' },
+    el('b', {}, 'Outbox'), '→', el('b', {}, 'Relay (producer)'), '→', el('b', {}, 'Broker'), '→',
+    el('b', {}, 'BookKeeper'), '→', el('b', {}, 'Assinatura'), '→', el('b', {}, 'Consumidor'), '→', el('b', {}, 'ACK / NACK')),
+];
+const kvList = (info) => info ? el('div', { class: 'kv' },
+  Object.entries(info).map(([k, v]) => el('span', {}, el('b', {}, k), String(v)))) : null;
+const sinceStart = (t0, at) => fmtOffset(new Date(at) - new Date(t0));
+
+function msgCard(m, isNew) {
+  const lastKind = m.steps[m.steps.length - 1]?.kind;
+  const [label, cls] = MSG_STATUS[lastKind] || ['—', 'oc-running'];
+  const redeliveries = m.steps.filter(s => s.kind === 'nack').length;
+  const open = msgOpen.has(m.eventId) ? msgOpen.get(m.eventId) : isNew && msgNodes.size === 0;
+  const det = el('details', { class: `trace${isNew ? ' fresh' : ''} ${cls === 'oc-error' ? 'o-error' : cls === 'oc-done' ? 'o-done' : 'o-waiting'}` },
+    el('summary', {},
+      el('div', { class: 'trace-top' },
+        el('span', { class: 'chev', 'aria-hidden': 'true' }, '▸'),
+        el('span', { class: `outcome ${cls}` }, label),
+        el('span', { class: 'mono', title: m.eventId }, `evento ${short(m.eventId)}`),
+        el('span', { class: 'who' }, `${m.topic}${m.key ? ' · chave ' + short(m.key) : ''}${redeliveries ? ` · ${redeliveries} NACK` : ''}`),
+        el('span', { class: 'when' }, `${timeOf(m.firstAt)} · ${m.steps.length} passos · ${sinceStart(m.firstAt, m.lastAt)}`),
+      ),
+    ),
+    el('ol', { class: 'steps' }, m.steps.map(s =>
+      el('li', { class: `step k-${s.kind}` },
+        el('span', { class: 'off' }, sinceStart(m.firstAt, s.at)),
+        el('span', { class: 'stg' }, s.kind),
+        el('span', { class: 'ttl' }, s.title),
+        s.info ? el('span', { class: 'det kvwrap' }, kvList(s.info)) : null,
+      ))),
+  );
+  det.open = open;
+  det.addEventListener('toggle', () => msgOpen.set(m.eventId, det.open));
+  return det;
+}
+
+async function renderMessaging(body) {
+  const { data } = await call('GET', '/debug/messaging', { show: false });
+  if (!Array.isArray(data)) return;
+  if (tab !== 'messaging') return;
+  $('#tn-messaging').textContent = data.length || '';
+  if (body.firstChild !== msgIntro[0]) body.replaceChildren(...msgIntro, msgBox);
+  if (!data.length) {
+    msgNodes.clear();
+    if (!msgBox.querySelector('.empty')) msgBox.replaceChildren(el('div', { class: 'empty' }, 'Nenhuma mensagem ainda. Crie um pedido e acompanhe aqui o caminho dele pelo broker.'));
+    return;
+  }
+  const ids = new Set(data.map(m => m.eventId));
+  for (const id of [...msgNodes.keys()]) if (!ids.has(id)) { msgNodes.delete(id); msgOpen.delete(id); }
+  const nodes = data.map(m => {
+    const cur = msgNodes.get(m.eventId);
+    if (cur && cur.version === m.version) return cur.node;
+    const node = msgCard(m, !cur);
+    msgNodes.set(m.eventId, { node, version: m.version });
+    return node;
+  });
+  const same = nodes.length === msgBox.children.length && nodes.every((n, i) => msgBox.children[i] === n);
+  if (!same) msgBox.replaceChildren(...nodes);
+}
+
+/* ---------------- Aba Pulsar ---------------- */
+const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const kv = (obj) => kvList(Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined && v !== null && v !== '')));
+
+async function renderPulsar(body) {
+  const [{ data }, { data: msgs }] = await Promise.all([
+    call('GET', '/debug/pulsar', { show: false }),
+    call('GET', '/debug/messaging', { show: false }),
+  ]);
+  if (tab !== 'pulsar' || !data) return;
+  if (data.broker !== 'pulsar') {
+    return body.replaceChildren(el('div', { class: 'empty' }, 'O app está com BROKER=memory: o Pulsar não está em uso. Troque para BROKER=pulsar no .env e suba o docker-compose para ver esta aba.'));
+  }
+  if (!data.ok) return body.replaceChildren(el('div', { class: 'empty' }, `Não foi possível ler o admin do Pulsar: ${data.error}`));
+  const d = data.details;
+  const main = d.topics.find(t => t.short === 'order.created') || d.topics[0];
+  const others = d.topics.filter(t => t !== main);
+  const sub = main?.subscriptions[0];
+  const lastMsg = Array.isArray(msgs) ? msgs.find(m => m.steps.some(s => s.kind === 'stored' || s.kind === 'delivered')) : null;
+  const stepInfo = (kind) => lastMsg?.steps.find(s => s.kind === kind);
+
+  const flow = main ? el('ol', { class: 'flow' },
+    el('li', {}, el('div', {},
+      el('h4', {}, 'O relay (producer) envia a mensagem'),
+      el('p', {}, `O relay lê a outbox e chama producer.send() pela conexão binária em ${d.serviceUrl}. A mensagem leva partitionKey = id do pedido (define a ordem) e a propriedade eventId (usada pelo consumidor para deduplicar). Batching desligado e timeout de envio de 5s.`),
+      main.publishers.length
+        ? main.publishers.map(p => el('div', { class: 'sub' }, kv({ producer: p.name, endereço: p.address, cliente: p.client, 'conectado desde': timeOf(p.connectedSince) })))
+        : el('div', { class: 'sub muted' }, 'Nenhum producer conectado agora (o relay cria o producer no primeiro envio).'),
+    )),
+    el('li', {}, el('div', {},
+      el('h4', {}, `O broker recebe no tópico ${main.short}`),
+      el('p', {}, `Tópico persistente ${main.name}. O broker dono do tópico recebe a mensagem e manda gravar antes de responder.`),
+      el('div', { class: 'live' }, kv({ 'mensagens recebidas': main.msgInCounter, 'bytes recebidos': fmtBytes(main.bytesInCounter), 'taxa de entrada': `${main.msgRateIn.toFixed(2)}/s`, 'taxa de saída': `${main.msgRateOut.toFixed(2)}/s` })),
+    )),
+    el('li', {}, el('div', {},
+      el('h4', {}, 'O BookKeeper grava e o broker confirma'),
+      el('p', {}, 'A mensagem vira uma entry num ledger do BookKeeper. Só depois de gravada o broker devolve o send receipt com o messageId (ledger, entry). É nesse ponto que o relay marca a linha da outbox como published.'),
+      el('div', { class: 'live' }, kv({ 'entries no tópico': main.storage.entries, 'última entry confirmada': main.storage.lastConfirmedEntry, 'ledgers': main.storage.ledgers.map(l => l.ledgerId).join(', '), 'armazenamento': fmtBytes(main.storageSize), estado: main.storage.state })),
+      stepInfo('stored') ? el('div', { class: 'sub' }, el('b', {}, 'Última confirmação: '), kv(stepInfo('stored').info)) : null,
+    )),
+    el('li', {}, el('div', {},
+      el('h4', {}, sub ? `A assinatura ${sub.name} (${sub.type}) distribui` : 'Assinatura'),
+      el('p', {}, 'A assinatura guarda um cursor: até onde já foi confirmado. Em Key_Shared, todas as mensagens com a mesma chave vão sempre para o mesmo consumidor, então os eventos de um pedido chegam em ordem mesmo com vários consumidores em paralelo.'),
+      sub ? el('div', { class: 'live' }, kv({ 'na fila (backlog)': sub.backlog, 'entregues sem ACK': sub.unacked, 'entregues': sub.delivered, 'reentregas (NACK)': sub.redeliveries, 'último ACK': sub.lastAckedAt ? timeOf(sub.lastAckedAt) : '—' })) : el('div', { class: 'sub muted' }, 'Sem assinatura: ninguém vai consumir este tópico.'),
+    )),
+    el('li', {}, el('div', {},
+      el('h4', {}, 'O consumidor recebe e processa'),
+      el('p', {}, 'Cada consumidor tem permits (quantas mensagens ainda aceita receber). O handler grava o eventId em processed_events e confirma o pedido na mesma transação; se o eventId já existir, é duplicata e o efeito não é aplicado de novo.'),
+      sub?.consumers.length
+        ? sub.consumers.map(c => el('div', { class: 'sub' }, kv({ consumidor: c.name, endereço: c.address, permits: c.permits, 'sem ACK': c.unacked, recebidas: c.delivered, 'conectado desde': timeOf(c.connectedSince) })))
+        : el('div', { class: 'sub muted' }, 'Nenhum consumidor conectado.'),
+      stepInfo('delivered') ? el('div', { class: 'sub' }, el('b', {}, 'Última entrega: '), kv(stepInfo('delivered').info)) : null,
+    )),
+    el('li', {}, el('div', {},
+      el('h4', {}, 'ACK avança o cursor; NACK reentrega'),
+      el('p', {}, `ACK: o cursor avança (markDeletePosition) e a mensagem sai do backlog. NACK (erro no handler): o broker reentrega em ~${d.nackRedeliverMs / 1000}s. Depois de ${d.maxRedeliver} reentregas a mensagem vai para o tópico de dead letter ${main.short}.${sub?.name ?? '<assinatura>'}.DLQ.`),
+      sub?.cursor ? el('div', { class: 'live' }, kv({ 'confirmado até (markDelete)': sub.cursor.markDeletePosition, 'próxima leitura (read)': sub.cursor.readPosition, 'consumidas pelo cursor': sub.cursor.consumed })) : null,
+    )),
+  ) : el('div', { class: 'empty' }, 'Nenhum tópico ainda. Crie um pedido para o relay criar o tópico.');
+
+  body.replaceChildren(
+    el('p', { class: 'hint' }, 'Como o Pulsar recebe a requisição do relay e entrega ao consumidor, com os números ao vivo lidos do admin REST do Pulsar.'),
+    el('div', { class: 'conn' },
+      el('div', {}, el('small', {}, 'Conexão dos clientes'), el('code', {}, d.serviceUrl)),
+      el('div', {}, el('small', {}, 'Admin REST'), el('code', {}, d.adminUrl)),
+      el('div', {}, el('small', {}, 'Namespace'), el('code', {}, d.namespace)),
+      el('div', {}, el('small', {}, 'Tópicos no namespace'), el('code', {}, d.topics.length)),
+    ),
+    el('div', { class: 'pulsar-h' }, 'Fluxo completo de uma mensagem'),
+    flow,
+    others.length ? el('div', { class: 'pulsar-h' }, 'Outros tópicos') : null,
+    ...others.map(t => el('div', { class: 'topic' + (t.subscriptions.length ? '' : ' stray') },
+      el('h4', {}, t.name),
+      kv({ recebidas: t.msgInCounter, armazenamento: fmtBytes(t.storageSize), assinaturas: t.subscriptions.map(s => `${s.name} (backlog ${s.backlog})`).join(', ') || 'nenhuma' }),
+    )),
+  );
+}
+
+/* ---------------- Webhooks ---------------- */
+$('#wh-url').value = `${location.origin}/demo-receiver`;
+$('#wh-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const checked = [...document.querySelectorAll('[name=wh-evt]:checked')].map(i => i.value);
+  const events = checked.includes('*') ? ['*'] : checked;
+  if (!events.length) return toast('Escolha pelo menos um evento (ou "Todos os eventos").');
+  const r = await call('POST', '/webhooks/endpoints', {
+    body: { url: $('#wh-url').value.trim(), description: $('#wh-desc').value.trim() || undefined, events },
+    label: 'cadastrar webhook',
+  });
+  if (r.status === 201) {
+    $('#wh-secret').replaceChildren(el('div', { class: 'secret-box' },
+      el('b', {}, 'Endpoint cadastrado. Guarde o segredo: ele não aparece de novo.'),
+      el('code', {}, r.data.secret),
+      el('div', { class: 'muted', style: 'margin-top:4px' }, 'O cliente usa este segredo para validar o header webhook-signature (HMAC-SHA256).'),
+    ));
+    toast('Endpoint cadastrado. Crie um pedido para receber o webhook.');
+    lastWebhooks = ''; tab === 'webhooks' && renderTab();
+  } else if (r.status === 409) {
+    toast('Já existe um endpoint para esta URL: altere os eventos dele na aba Webhooks.');
+  }
+};
+
+const WH_STATUS = { pending: 'na fila', delivering: 'enviando', delivered: 'entregue', failed: 'falhou' };
+const whOpen = new Map();
+let lastWebhooks = '';
+
+function whAction(method, path, label, msg, body) {
+  return call(method, path, { label, body }).then((r) => {
+    if (r.status < 300 && msg) toast(msg);
+    lastWebhooks = ''; refresh();
+  });
+}
+
+function deliveryCard(d, max) {
+  const open = whOpen.get(d.id) ?? false;
+  const last = d.attemptsLog[d.attemptsLog.length - 1];
+  const cls = d.status === 'delivered' ? 'o-done' : d.status === 'failed' ? 'o-error' : 'o-waiting';
+  const det = el('details', { class: `trace ${cls}` },
+    el('summary', {},
+      el('div', { class: 'trace-top' },
+        el('span', { class: 'chev', 'aria-hidden': 'true' }, '▸'),
+        el('span', { class: `status s-${d.status}` }, WH_STATUS[d.status] || d.status),
+        el('span', { class: 'evt' }, d.eventType),
+        d.lastStatusCode ? el('span', { class: `code c${String(d.lastStatusCode)[0]}` }, d.lastStatusCode) : null,
+        el('span', { class: 'who', title: d.url }, d.url),
+        el('span', { class: 'when' },
+          `${timeOf(d.createdAt)} · tentativa ${d.attempts}/${max}`,
+          d.status === 'pending' && d.attempts ? ` · próxima ${rel(d.nextAttemptAt)}` : ''),
+      ),
+    ),
+    el('div', { class: 'inner' },
+      d.lastError ? el('div', { class: 'err', style: 'max-width:none;margin-bottom:8px' }, `Último erro: ${d.lastError}`) : null,
+      el('div', { class: 'sub-h', style: 'margin:0 0 6px' }, `Requisição enviada: POST ${d.url}`),
+      last ? kvList(last.requestHeaders) : el('div', { class: 'muted' }, 'Ainda não enviado.'),
+      el('pre', { style: 'margin:8px 0 0' }, JSON.stringify(d.payload, null, 2)),
+      d.attemptsLog.length ? el('div', { class: 'sub-h', style: 'margin:12px 0 6px' }, 'Tentativas') : null,
+      d.attemptsLog.length ? el('table', {},
+        el('thead', {}, el('tr', {}, ['#', 'Quando', 'Resposta', 'Duração', 'Detalhe'].map(h => el('th', {}, h)))),
+        el('tbody', {}, d.attemptsLog.map(a => el('tr', {},
+          el('td', { class: 'num' }, a.attempt),
+          el('td', { class: 'muted' }, timeOf(a.createdAt)),
+          el('td', {}, a.statusCode ? el('span', { class: `code c${String(a.statusCode)[0]}` }, a.statusCode) : el('span', { class: 'code c0' }, 'sem resposta')),
+          el('td', { class: 'num' }, `${a.durationMs}ms`),
+          el('td', { class: a.error ? 'err' : 'mono' }, a.error || a.responseBody || ''),
+        ))),
+      ) : null,
+      el('div', { class: 'btns', style: 'margin-top:10px' },
+        d.status !== 'delivering' ? el('button', { class: 'btn small', type: 'button', onclick: () => whAction('POST', `/webhooks/deliveries/${d.id}/retry`, 'reenviar webhook', 'Webhook reenfileirado.') }, d.status === 'delivered' ? 'Reenviar (duplicar)' : 'Reenviar agora') : null,
+      ),
+    ),
+  );
+  det.open = open;
+  det.addEventListener('toggle', () => whOpen.set(d.id, det.open));
+  return det;
+}
+
+async function renderWebhooks(body) {
+  const { data } = await call('GET', '/debug/webhooks', { show: false });
+  if (tab !== 'webhooks' || !data || !Array.isArray(data.endpoints)) return;
+  $('#tn-webhooks').textContent = data.deliveries.length || '';
+  const json = JSON.stringify(data);
+  // Nada mudou: não redesenha (preserva rolagem e o que está aberto).
+  if (json === lastWebhooks && body.querySelector('.wh-root')) return;
+  lastWebhooks = json;
+  const max = data.config.maxAttempts;
+
+  body.replaceChildren(el('div', { class: 'wh-root' },
+    el('p', { class: 'hint' }, 'Quando o consumidor confirma o pedido, grava o webhook order.confirmed na MESMA transação (tabela webhook_deliveries). O dispatcher envia um POST assinado com HMAC-SHA256 para cada endpoint, retenta com backoff e registra cada tentativa.'),
+    el('div', { class: 'flowbar' },
+      el('b', {}, 'Pedido CONFIRMED'), '→', el('b', {}, 'webhook_deliveries'), '→', el('b', {}, 'Dispatcher'), '→',
+      el('b', {}, 'POST assinado'), '→', el('b', {}, 'Cliente valida'), '→', el('b', {}, '2xx = entregue')),
+
+    el('div', { class: 'wh-sec' }, `Endpoints (${data.endpoints.length})`),
+    ...(() => {
+      const active = data.endpoints.filter(e => e.active);
+      const dupUrls = [...new Set(active.map(e => e.url).filter((u, i, a) => a.indexOf(u) !== i))];
+      const noFinal = active.filter(e => !e.events.includes('*') && !e.events.includes('order.completed'));
+      return [
+        dupUrls.length ? el('div', { class: 'wh-warn' }, `URL repetida em mais de um endpoint ativo (${dupUrls.join(', ')}): o cliente recebe cada aviso em dobro. Remova ou desative os extras.`) : null,
+        noFinal.length ? el('div', { class: 'wh-warn' }, `${noFinal.length} endpoint(s) não recebem o resultado final (order.completed). Use "Assinar todos" no endpoint.`) : null,
+      ];
+    })(),
+    data.endpoints.length ? data.endpoints.map(e => el('div', { class: 'endpoint' + (e.active ? '' : ' off') },
+      el('div', { class: 'url' }, e.url),
+      el('div', { class: 'row' },
+        e.events.map(ev => el('span', { class: 'evt' }, ev === '*' ? 'todos os eventos' : ev)),
+        el('span', {}, e.description || ''),
+        el('span', { class: 'mono' }, `segredo ${e.secret}`),
+        el('span', {}, e.active ? 'ativo' : 'inativo'),
+        el('div', { class: 'btns' },
+          el('button', { class: 'btn small', type: 'button', onclick: () => whAction('POST', `/webhooks/endpoints/${e.id}/test`, 'webhook de teste', 'Webhook de teste na fila.') }, 'Enviar teste'),
+          !e.events.includes('*') ? el('button', { class: 'btn small', type: 'button', title: 'Passa a receber todos os eventos, inclusive order.completed', onclick: () => whAction('PATCH', `/webhooks/endpoints/${e.id}`, 'assinar todos os eventos', 'Endpoint assina todos os eventos.', { events: ['*'] }) }, 'Assinar todos') : null,
+          el('button', { class: 'btn small', type: 'button', onclick: () => whAction('PATCH', `/webhooks/endpoints/${e.id}`, e.active ? 'desativar endpoint' : 'ativar endpoint', e.active ? 'Endpoint desativado.' : 'Endpoint ativado.', { active: !e.active }) }, e.active ? 'Desativar' : 'Ativar'),
+          el('button', { class: 'btn small danger', type: 'button', onclick: () => confirm('Remover este endpoint e o histórico de entregas dele?') && whAction('DELETE', `/webhooks/endpoints/${e.id}`, 'remover endpoint', 'Endpoint removido.') }, 'Remover'),
+        ),
+      ),
+    )) : el('div', { class: 'empty' }, 'Nenhum endpoint. Cadastre um no painel "Webhook do cliente final" ao lado.'),
+
+    el('div', { class: 'wh-sec' }, `Entregas (${data.deliveries.length})`,
+      el('button', { class: 'btn small', type: 'button', onclick: () => whAction('POST', '/debug/webhooks/run', 'ciclo manual do dispatcher') }, 'Rodar dispatcher agora')),
+    data.deliveries.length
+      ? el('div', { class: 'msg-list' }, data.deliveries.map(d => deliveryCard(d, max)))
+      : el('div', { class: 'empty' }, 'Nenhuma entrega ainda. Com um endpoint ativo, crie um pedido: o webhook nasce quando o consumidor confirma.'),
+
+    el('div', { class: 'wh-sec' }, 'Recebido pelo cliente (receptor de demonstração)'),
+    data.received.length ? data.received.map(r => el('div', { class: 'recv' + (r.status >= 300 ? ' bad' : '') },
+      el('div', { class: 'top' },
+        el('span', { class: `code c${String(r.status)[0]}` }, r.status),
+        el('span', { class: 'evt' }, r.event || '?'),
+        r.signatureValid ? el('span', { class: 'ok-mark' }, '✓ assinatura válida') : el('span', { class: 'bad-mark' }, '✗ assinatura inválida'),
+        r.duplicate ? el('span', { class: 'tag' }, 'duplicado: cliente ignora') : null,
+        el('span', { class: 'mono muted' }, `webhook-id ${short(r.webhookId)} · tentativa ${r.attempt}`),
+        el('span', { class: 'when' }, timeOf(r.at)),
+      ),
+      r.reason ? el('div', { class: 'err', style: 'max-width:none' }, r.reason) : null,
+      r.body?.data?.message ? el('div', {}, r.body.data.message) : null,
+    )) : el('div', { class: 'empty' }, 'Nada recebido ainda pelo receptor /demo-receiver.'),
+  ));
+}
+
+/* ---------------- Fluxo ponta a ponta ---------------- */
+const ORDER_STATUS = { PENDING: 'pendente', CONFIRMED: 'confirmado', SHIPPED: 'enviado', DELIVERED: 'entregue' };
+const SHORT_TITLES = ['API', 'Transação', 'Publica', 'Confirma', 'Próximo evento', 'Publica', 'Transportadora', 'Entrega', 'Webhook volta', 'Cliente avisado', 'Relatório'];
+let jSelected = null;
+let jLast = '';
+const jOpen = new Set();
+
+$('#j-follow').onchange = () => { if ($('#j-follow').checked) jSelected = null; jLast = ''; renderJourney(); };
+
+$('#btn-simulate').onclick = async () => {
+  const btn = $('#btn-simulate');
+  btn.disabled = true;
+  try {
+    // 1) Garante que o "cliente final" tem um endpoint para receber os webhooks.
+    const { data: eps } = await call('GET', '/webhooks/endpoints', { show: false });
+    const demoUrl = `${location.origin}/demo-receiver`;
+    const demo = Array.isArray(eps) ? eps.find(e => e.active && e.url === demoUrl) : null;
+    if (!demo) {
+      await call('POST', '/webhooks/endpoints', {
+        body: { url: demoUrl, description: 'Cliente final (demo)', events: ['*'] },
+        label: 'endpoint do cliente (simulação)',
+      });
+    } else if (!demo.events.includes('*')) {
+      // Endpoint antigo: passa a receber tudo, inclusive o resultado final.
+      await call('PATCH', `/webhooks/endpoints/${demo.id}`, { body: { events: ['*'] }, show: false });
+    }
+    // 2) Cria o pedido. Daqui em diante tudo é assíncrono: outbox, Pulsar, transportadora, webhooks.
+    const r = await call('POST', '/orders', {
+      body: { customerEmail: 'cliente@loja.com', amount: (50 + Math.random() * 450).toFixed(2) },
+      headers: { 'Idempotency-Key': uuid() },
+      label: 'simulação do fluxo completo',
+    });
+    if (r.status === 201) {
+      jSelected = r.data.id; $('#j-follow').checked = true; jLast = '';
+      toast('Pedido criado. Acompanhe os 11 passos no topo da página.');
+      $('#journey').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      refresh();
+    }
+  } finally { btn.disabled = false; }
+};
+
+const fmtElapsed = (from, to) => {
+  if (!from || !to) return '';
+  const ms = new Date(to) - new Date(from);
+  return ms < 1000 ? `+${ms}ms` : `+${(ms / 1000).toFixed(1)}s`;
+};
+
+/** Passo 11: endpoints sem order.completed passam a assinar tudo e o resultado é reenviado. */
+async function fixFinalWebhook(fix) {
+  for (const e of fix.endpoints) {
+    await call('PATCH', `/webhooks/endpoints/${e.id}`, { body: { events: ['*'] }, show: false });
+  }
+  const r = await call('POST', `/webhooks/orders/${fix.orderId}/completed`, { label: 'reenviar resultado final' });
+  toast(r.status === 202
+    ? (r.data.queued ? `Resultado final reenviado para ${r.data.queued} endpoint(s).` : 'Nenhum endpoint novo para receber: cadastre um endpoint primeiro.')
+    : (r.data?.message || 'Não foi possível reenviar.'));
+  jLast = ''; lastWebhooks = ''; refresh();
+}
+
+async function renderJourney() {
+  const [{ data }, { data: sim }] = await Promise.all([
+    call('GET', '/debug/journeys?limit=8', { show: false }),
+    call('GET', '/debug/carrier', { show: false }),
+  ]);
+  if (!Array.isArray(data)) return;
+  // Seguindo: sempre o pedido mais recente. Senão, o escolhido (se ainda estiver na lista).
+  if ($('#j-follow').checked || !data.some(x => x.orderId === jSelected)) jSelected = data[0]?.orderId ?? null;
+  const j = data.find(x => x.orderId === jSelected) || data[0];
+  const simShip = Array.isArray(sim) && j ? sim.find(s => s.request?.reference === j.orderId) : null;
+  const json = JSON.stringify([data.map(x => [x.orderId, x.status]), j, simShip, jSelected]);
+  if (json === jLast) return;
+  jLast = json;
+
+  $('#j-orders').replaceChildren(...data.map(x => el('button', {
+    class: 'j-chip', type: 'button', 'aria-pressed': String(x.orderId === j?.orderId),
+    onclick: () => { jSelected = x.orderId; $('#j-follow').checked = x.orderId === data[0].orderId; jLast = ''; renderJourney(); },
+  }, el('span', { class: 'mono' }, short(x.orderId)), el('span', { class: `status s-${x.status}` }, ORDER_STATUS[x.status] || x.status))));
+
+  const body = $('#j-body');
+  if (!j) return body.replaceChildren(el('div', { class: 'j-empty' }, 'Nenhum pedido ainda. Clique em "Simular fluxo completo".'));
+
+  // Lado da transportadora (simulador): enriquece os passos 8 e 9 com o estado de lá.
+  const steps = j.steps.map(s => ({ ...s, info: { ...s.info } }));
+  if (simShip) {
+    steps[7].info['status na transportadora'] = simShip.status;
+    if (simShip.callbacks.length) {
+      steps[8].info['tentativas do aviso (lado deles)'] = simShip.callbacks.map(c => c.statusCode ?? 'erro').join(' → ');
+    }
+  }
+
+  const current = steps.find(s => s.status === 'active' || s.status === 'error' || s.status === 'warn');
+  const finished = steps[steps.length - 1].status === 'done';
+  const now = finished
+    ? el('div', { class: 'j-now ok' }, `✓ Fluxo concluído em ${fmtElapsed(j.startedAt, j.finishedAt).slice(1)}: pedido entregue, cliente avisado e relatório final enviado.`)
+    : current
+      ? el('div', { class: 'j-now' + (current.status === 'error' || current.fix ? ' bad' : '') },
+          current.fix
+            ? `Pedido entregue e PAID, mas o resultado final não chegou ao cliente (passo ${current.n}): veja o motivo abaixo.`
+            : `${current.status === 'error' ? 'Falha' : 'Agora'} no passo ${current.n}: ${current.title}`)
+      : null;
+
+  body.replaceChildren(
+    el('div', { class: 'j-rail', role: 'list' }, steps.map((s, i) => el('button', {
+      class: `j-dot ${s.status}`, type: 'button', role: 'listitem', title: `${s.n}. ${s.title}`,
+      onclick: () => document.getElementById(`jstep-${s.n}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    }, el('b', {}, s.n), el('span', {}, SHORT_TITLES[i])))),
+    now,
+    el('ol', { class: 'j-steps' }, steps.map(s => el('li', { class: `j-step ${s.status}${s.report ? ' wide' : ''}`, id: `jstep-${s.n}` },
+      el('div', { class: 'top' },
+        el('span', { class: 'num' }, s.n),
+        el('h4', {}, s.title),
+        el('span', { class: 'actor' }, s.actor),
+        el('span', { class: 't', title: s.at ? new Date(s.at).toLocaleString('pt-BR') : '' }, s.at ? `${timeOf(s.at)} · ${fmtElapsed(j.startedAt, s.at)}` : s.status === 'active' ? 'em andamento…' : ''),
+      ),
+      el('p', {}, s.explain),
+      s.headline ? el('div', { class: 'j-status' }, s.headline.map(h => el('div', { class: `j-stat ${h.tone}` }, el('small', {}, h.label), el('b', {}, h.value)))) : null,
+      s.fix ? el('div', { class: 'j-fix' },
+        el('b', {}, 'Por que o resultado final não chegou ao cliente'),
+        el('span', {}, s.fix.reason),
+        s.fix.endpoints.length ? el('span', { class: 'mono' }, s.fix.endpoints.map(e => `${e.url} → ${e.events.join(', ')}`).join(' · ')) : null,
+        el('div', { class: 'btns' },
+          el('button', { class: 'btn primary small', type: 'button', onclick: () => fixFinalWebhook(s.fix) },
+            s.fix.endpoints.length ? 'Assinar todos os eventos e reenviar resultado' : 'Reenviar resultado final'),
+        ),
+      ) : null,
+      s.report ? el('ol', { class: 'j-report' }, s.report.map((l, i) => el('li', {
+        class: !l.at && /^Em andamento/.test(l.text) ? 'pending-line' : i === s.report.length - 1 && /^Resultado final/.test(l.text) ? 'final' : '',
+      }, el('span', {}, l.text), el('span', { class: 'when' }, l.at ? fmtElapsed(j.startedAt, l.at) : '')))) : null,
+      Object.keys(s.info).length ? kvList(s.info) : null,
+      ...(s.json || []).filter(x => x.value != null).map(x => {
+        const key = `${j.orderId}:${s.n}:${x.label}`;
+        const d = el('details', {}, el('summary', {}, x.label), el('pre', {}, JSON.stringify(x.value, null, 2)));
+        d.open = jOpen.has(key);
+        d.addEventListener('toggle', () => d.open ? jOpen.add(key) : jOpen.delete(key));
+        return d;
+      }),
+    ))),
+  );
+}
+
+/* ---------------- Visão geral (pipeline) ---------------- */
+const last = {};
+function setNum(id, stage, value) {
+  const n = $(id);
+  if (n.textContent !== String(value)) {
+    n.textContent = value;
+    if (last[id] !== undefined) { const s = $(stage); s.classList.remove('pulse'); void s.offsetWidth; s.classList.add('pulse'); }
+  }
+  last[id] = value;
+}
+
+async function renderOverview() {
+  const [{ status, data: o }, { data: health }] = await Promise.all([
+    call('GET', '/debug/overview', { show: false }),
+    call('GET', '/health', { show: false }),
+  ]);
+  const banner = $('#banner');
+  if (status !== 200 || !o) {
+    banner.textContent = 'A API não está respondendo. Verifique se ela está rodando (pnpm start:dev) e se o Postgres está no ar.';
+    banner.classList.add('show');
+    setChip('#chip-db', false); setChip('#chip-broker', false);
+    return;
+  }
+  banner.classList.remove('show');
+  setChip('#chip-db', health?.database, 'Postgres');
+  setChip('#chip-broker', o.brokerHealthy, o.broker === 'pulsar' ? 'Pulsar' : 'Broker em memória');
+
+  const totalOrders = o.orders.PENDING + o.orders.CONFIRMED + o.orders.SHIPPED + o.orders.DELIVERED;
+  setNum('#n-orders', '#st-api', totalOrders);
+  $('#d-orders').replaceChildren(el('b', {}, o.orders.DELIVERED), ' entregues, ', el('b', {}, o.orders.CONFIRMED + o.orders.SHIPPED), ' em andamento, ', el('b', {}, o.orders.PENDING), ' pendentes');
+
+  const queued = o.outbox.pending + o.outbox.processing;
+  setNum('#n-outbox', '#st-outbox', queued);
+  const parts = [];
+  if (o.outbox.failed) parts.push(el('b', {}, o.outbox.failed), ' em dead letter · ');
+  parts.push(el('b', {}, o.outbox.published), ' publicados');
+  if (o.oldestPendingSeconds != null) parts.push(` · o mais antigo há ${Math.round(o.oldestPendingSeconds)}s`);
+  $('#d-outbox').replaceChildren(...parts);
+  $('#st-outbox').classList.toggle('alarm', o.outbox.failed > 0 || (o.oldestPendingSeconds ?? 0) > 10);
+
+  const { data: tp } = await call('GET', '/debug/topics', { show: false });
+  const published = (tp?.topics || []).reduce((a, t) => a + t.published, 0);
+  const backlog = (tp?.topics || []).flatMap(t => t.subscriptions).reduce((a, s) => a + s.backlog, 0);
+  const redel = (tp?.topics || []).flatMap(t => t.subscriptions).reduce((a, s) => a + s.redeliveries, 0);
+  const stray = (tp?.topics || []).filter(t => !t.subscriptions.length && t.published > 0);
+  setNum('#n-broker', '#st-broker', published);
+  $('#w-broker').textContent = o.broker === 'pulsar' ? 'Mensagens publicadas no Pulsar' : 'Mensagens publicadas (memória)';
+  $('#d-broker').replaceChildren(el('b', {}, backlog), ' na fila · ', el('b', {}, redel), ' reentregas',
+    stray.length ? ` · ${stray.length} tópico sem assinatura` : '');
+  $('#st-broker').classList.toggle('alarm', stray.length > 0);
+
+  setNum('#n-consumer', '#st-consumer', o.processedEvents);
+  $('#tn-orders').textContent = totalOrders;
+  $('#tn-outbox').textContent = queued + o.outbox.published + o.outbox.failed;
+  $('#tn-processed').textContent = o.processedEvents;
+
+  document.querySelectorAll('[data-flag]').forEach(i => { if (document.activeElement !== i) i.checked = !!o.chaos[i.dataset.flag]; });
+}
+function setChip(sel, ok, text) {
+  const c = $(sel);
+  c.querySelector('.dot').className = 'dot ' + (ok ? 'ok' : 'bad');
+  if (text) c.lastChild.textContent = text + (ok ? '' : ' indisponível');
+}
+
+/* ---------------- Logs ---------------- */
+let lastLog = 0, level = 'all', paused = false;
+const LV = { debug: 0, log: 1, warn: 2, error: 3 };
+document.querySelectorAll('[data-level]').forEach(b => b.onclick = () => {
+  level = b.dataset.level;
+  document.querySelectorAll('[data-level]').forEach(x => x.setAttribute('aria-pressed', x === b));
+  applyLevel();
+});
+$('#btn-pause').onclick = (e) => { paused = !paused; e.currentTarget.setAttribute('aria-pressed', paused); e.currentTarget.textContent = paused ? 'Retomar rolagem' : 'Pausar rolagem'; };
+const visible = (lv) => level === 'all' || LV[lv] >= LV[level];
+function applyLevel() { document.querySelectorAll('.line').forEach(l => l.hidden = !visible(l.dataset.lv)); }
+
+async function pullLogs() {
+  const { data } = await call('GET', `/debug/logs?after=${lastLog}`, { show: false });
+  if (!Array.isArray(data) || !data.length) return;
+  const box = $('#lines');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  for (const e of data) {
+    lastLog = Math.max(lastLog, e.seq);
+    const line = el('div', { class: `line lv-${e.level}`, 'data-lv': e.level, title: e.stack || '' },
+      el('span', { class: 't' }, timeOf(e.at)),
+      el('span', { class: 'lv' }, e.level === 'log' ? 'info' : e.level),
+      el('span', { class: 'ctx' }, e.context),
+      el('span', { class: 'msg' }, e.message),
+    );
+    line.hidden = !visible(e.level);
+    box.append(line);
+  }
+  while (box.children.length > 500) box.firstChild.remove();
+  if (!paused && atBottom) box.scrollTop = box.scrollHeight;
+}
+
+/* ---------------- Requisições em tempo real ---------------- */
+const STAGES = [
+  ['api', 'API'], ['idempotency', 'Idempotência'], ['transaction', 'Transação'],
+  ['relay', 'Relay'], ['consumer', 'Consumidor'], ['carrier', 'Transportadora'], ['webhook', 'Webhook'],
+];
+const STAGE_NAME = Object.fromEntries(STAGES);
+const OUTCOME = {
+  running: 'Em andamento', waiting: 'Aguardando consumidor', done: 'Pedido confirmado',
+  duplicate: 'Transação duplicada', error: 'Erro',
+};
+const traceNodes = new Map();   // id → { node, version }
+const traceOpen = new Map();    // id → aberto/fechado pelo usuário
+const fmtOffset = (ms) => ms < 1000 ? `+${ms}ms` : `+${(ms / 1000).toFixed(1)}s`;
+
+function stageState(t, stage) {
+  const steps = t.steps.filter(s => s.stage === stage);
+  if (!steps.length) return '';
+  if (steps.some(s => s.status === 'error')) return 'error';
+  if (steps.some(s => s.status === 'warn')) return 'warn';
+  return steps[steps.length - 1].status;
+}
+
+function traceCard(t, isNew) {
+  const states = STAGES.map(([k]) => stageState(t, k));
+  // Enquanto espera, pisca o primeiro estágio que ainda não começou.
+  const nextIdx = (t.outcome === 'running' || t.outcome === 'waiting') ? states.findIndex(s => !s) : -1;
+  const req = t.request && typeof t.request === 'object' ? t.request : {};
+  const who = [req.customerEmail, req.amount != null ? `R$ ${req.amount}` : null].filter(Boolean).join(' · ');
+  const last = t.steps[t.steps.length - 1];
+  // Abre sozinho só a primeira requisição; depois vale o que o usuário escolheu.
+  const open = traceOpen.has(t.id) ? traceOpen.get(t.id) : isNew && traceNodes.size === 0;
+
+  const det = el('details', { class: `trace o-${t.outcome}${isNew ? ' fresh' : ''}` },
+    el('summary', {},
+      el('div', { class: 'trace-top' },
+        el('span', { class: 'chev', 'aria-hidden': 'true' }, '▸'),
+        el('span', { class: `outcome oc-${t.outcome}` }, OUTCOME[t.outcome] || t.outcome),
+        t.httpStatus ? el('span', { class: `code c${String(t.httpStatus)[0]}` }, t.httpStatus) : null,
+        el('span', { class: 'mono' }, `#${t.id} ${t.method} ${t.path}`),
+        who ? el('span', { class: 'who' }, who) : null,
+        el('span', { class: 'when' }, `${timeOf(t.startedAt)}${last ? ' · ' + fmtOffset(last.offsetMs) : ''}`),
+      ),
+      el('div', { class: 'track' }, STAGES.map(([, name], i) =>
+        el('div', { class: `seg ${states[i]}${i === nextIdx ? ' next' : ''}`, title: name },
+          el('i'), el('span', {}, name)))),
+    ),
+    el('div', { class: 'sub-h' }, [
+      t.idempotencyKey ? `Chave ${t.idempotencyKey}` : 'Sem Idempotency-Key',
+      t.orderId ? ` · pedido ${t.orderId.slice(0, 8)}` : '',
+      t.eventId ? ` · evento ${t.eventId.slice(0, 8)}` : '',
+    ].join('')),
+    el('ol', { class: 'steps' }, t.steps.map(s =>
+      el('li', { class: `step st-${s.status}` },
+        el('span', { class: 'off' }, fmtOffset(s.offsetMs)),
+        el('span', { class: 'stg' }, STAGE_NAME[s.stage] || s.stage),
+        el('span', { class: 'ttl' }, s.title),
+        s.detail ? el('span', { class: 'det' }, s.detail) : null,
+      ))),
+    t.response !== undefined ? el('div', { class: 'sub-h' }, 'Resposta enviada ao cliente') : null,
+    t.response !== undefined ? el('pre', {}, JSON.stringify(t.response, null, 2)) : null,
+  );
+  det.open = open;
+  det.addEventListener('toggle', () => traceOpen.set(t.id, det.open));
+  return det;
+}
+
+async function renderTraces() {
+  const { data } = await call('GET', '/debug/traces', { show: false });
+  if (!Array.isArray(data)) return;
+  const box = $('#traces');
+  if (!data.length) {
+    if (traceNodes.size || !box.querySelector('.empty')) {
+      traceNodes.clear(); traceOpen.clear();
+      box.replaceChildren(el('div', { class: 'empty' }, 'Nenhuma requisição ainda. Crie um pedido no formulário.'));
+    }
+    return;
+  }
+  const ids = new Set(data.map(t => t.id));
+  for (const id of [...traceNodes.keys()]) if (!ids.has(id)) { traceNodes.delete(id); traceOpen.delete(id); }
+  const nodes = data.map(t => {
+    const cur = traceNodes.get(t.id);
+    if (cur && cur.version === t.version) return cur.node;
+    const node = traceCard(t, !cur);
+    traceNodes.set(t.id, { node, version: t.version });
+    return node;
+  });
+  // Só mexe no DOM se algo mudou, para não atrapalhar quem está lendo.
+  const same = nodes.length === box.children.length && nodes.every((n, i) => box.children[i] === n);
+  if (!same) box.replaceChildren(...nodes);
+}
+
+/* ---------------- Loop ---------------- */
+let busy = false;
+async function refresh() {
+  if (busy) return; busy = true;
+  try { await Promise.all([renderOverview(), renderTab(), pullLogs(), renderTraces(), renderJourney()]); }
+  finally { busy = false; }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
